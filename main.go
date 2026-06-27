@@ -1,20 +1,25 @@
 package main
 
 import (
+	"fmt"
 	"net/http"
 	"net/http/httputil"
 	"net/url"
 	"time"
 
+	"context"
+
 	"github.com/gin-gonic/gin"
+	"github.com/redis/go-redis/v9"
 )
 
-type RateLimitInfo struct {
-	Count       int
-	WindowStart time.Time
-}
+// context allowing Redis client to manage cancellation/timeouts/lifetime
+var ctx = context.Background()
 
-var rateLimits = map[string]RateLimitInfo{}
+// connection to redis
+var redisClient = redis.NewClient(&redis.Options{
+	Addr: "localhost:6379",
+})
 
 // authenticating api key
 func apiKeyAuth() gin.HandlerFunc {
@@ -41,36 +46,55 @@ func apiKeyAuth() gin.HandlerFunc {
 }
 
 // limiting large number of requests
-func rateLimiter() gin.HandlerFunc {
+func redisRateLimiter() gin.HandlerFunc {
 	return func(c *gin.Context) {
 		apiKey := c.GetHeader("x-api-key")
 
-		limit := 5
-		window := time.Minute
-		now := time.Now()
+		redisKey := "rate_limit:" + apiKey
 
-		info, exists := rateLimits[apiKey]
+		count, err := redisClient.Incr(ctx, redisKey).Result()
 
-		if !exists || now.Sub(info.WindowStart) > window {
-			info = RateLimitInfo{
-				Count:       1,
-				WindowStart: now,
-			}
-		} else {
-			info.Count++
+		if err != nil {
+			fmt.Println("Redis error:", err)
+
+			c.JSON(http.StatusInternalServerError, gin.H{
+				"error": "Failed to communicate with Redis",
+			})
+			c.Abort()
+			return
 		}
 
-		rateLimits[apiKey] = info
+		if count == 1 {
+			redisClient.Expire(ctx, redisKey, time.Minute)
+		}
 
-		if info.Count > limit {
+		if count > 5 {
 			c.JSON(http.StatusTooManyRequests, gin.H{
-				"error": "Too Many Requests",
+				"error": "Too many requests",
 			})
 			c.Abort()
 			return
 		}
 
 		c.Next()
+	}
+}
+
+// logging requests made
+func requestLogger() gin.HandlerFunc {
+	return func(c *gin.Context) {
+		start := time.Now()
+
+		c.Next()
+
+		latency := time.Since(start)
+		status := c.Writer.Status()
+		apiKey := c.GetHeader("x-api-key")
+		method := c.Request.Method
+		path := c.Request.URL.Path
+		timestamp := start.Format("2006-01-02 15:04:05")
+
+		fmt.Printf("[%s] | Latency: %s | Status: %d | API Key: %s | Method: %s | Path: %s\n", timestamp, latency, status, apiKey, method, path)
 	}
 }
 
@@ -85,7 +109,7 @@ func main() {
 	router := gin.Default()
 
 	// if we get ping request and key is valid run function c
-	router.GET("/users", apiKeyAuth(), rateLimiter(), func(c *gin.Context) {
+	router.GET("/users", requestLogger(), apiKeyAuth(), redisRateLimiter(), func(c *gin.Context) {
 		proxy.ServeHTTP(c.Writer, c.Request)
 	})
 
