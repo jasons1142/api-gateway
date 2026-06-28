@@ -2,6 +2,7 @@ package main
 
 import (
 	"fmt"
+	"log"
 	"net/http"
 	"net/http/httputil"
 	"net/url"
@@ -10,24 +11,17 @@ import (
 	"context"
 
 	"github.com/gin-gonic/gin"
+	"github.com/joho/godotenv"
 	"github.com/redis/go-redis/v9"
 )
 
 // context allowing Redis client to manage cancellation/timeouts/lifetime
 var ctx = context.Background()
 
-// connection to redis
-var redisClient = redis.NewClient(&redis.Options{
-	Addr: "localhost:6379",
-})
-
 // authenticating api key
-func apiKeyAuth() gin.HandlerFunc {
+func apiKeyAuth(config *Config) gin.HandlerFunc {
 	// valid keys
-	validKeys := map[string]bool{
-		"abc123":        true,
-		"my-secret-key": true,
-	}
+	validKeys := config.APIKeys
 
 	// checking if they key is valid
 	return func(c *gin.Context) {
@@ -46,7 +40,7 @@ func apiKeyAuth() gin.HandlerFunc {
 }
 
 // limiting large number of requests
-func redisRateLimiter() gin.HandlerFunc {
+func redisRateLimiter(config *Config, redisClient *redis.Client) gin.HandlerFunc {
 	return func(c *gin.Context) {
 		apiKey := c.GetHeader("x-api-key")
 
@@ -65,10 +59,10 @@ func redisRateLimiter() gin.HandlerFunc {
 		}
 
 		if count == 1 {
-			redisClient.Expire(ctx, redisKey, time.Minute)
+			redisClient.Expire(ctx, redisKey, config.RateLimitWindow)
 		}
 
-		if count > 5 {
+		if int64(config.RateLimit) < count {
 			c.JSON(http.StatusTooManyRequests, gin.H{
 				"error": "Too many requests",
 			})
@@ -99,8 +93,24 @@ func requestLogger() gin.HandlerFunc {
 }
 
 func main() {
+	err := godotenv.Load()
+	if err != nil {
+		log.Fatal("Error loading .env file")
+	}
+
+	// loading in config struct
+	config, err := LoadConfig()
+	if err != nil {
+		log.Fatal(err)
+	}
+
+	// connection to redis
+	var redisClient = redis.NewClient(&redis.Options{
+		Addr: config.RedisAddr,
+	})
+
 	// target backend service
-	backendURL, _ := url.Parse("http://localhost:8081")
+	backendURL, _ := url.Parse(config.BackendURL)
 
 	// reverse proxy
 	proxy := httputil.NewSingleHostReverseProxy(backendURL)
@@ -109,7 +119,7 @@ func main() {
 	router := gin.Default()
 
 	// if we get ping request and key is valid run function c
-	router.GET("/users", requestLogger(), apiKeyAuth(), redisRateLimiter(), func(c *gin.Context) {
+	router.GET("/users", requestLogger(), apiKeyAuth(config), redisRateLimiter(config, redisClient), func(c *gin.Context) {
 		proxy.ServeHTTP(c.Writer, c.Request)
 	})
 
