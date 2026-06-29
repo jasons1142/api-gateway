@@ -145,6 +145,32 @@ func main() {
 		})
 	})
 
+	router.GET("/health", func(c *gin.Context) {
+		// check Redis
+		_, redisErr := redisClient.Ping(ctx).Result()
+
+		// check backend
+		resp, backendErr := http.Get(config.BackendURL + "/users")
+		if resp != nil {
+			defer resp.Body.Close()
+		}
+
+		if redisErr != nil || backendErr != nil {
+			c.JSON(http.StatusServiceUnavailable, gin.H{
+				"status":  "unhealthy",
+				"redis":   redisErr == nil,
+				"backend": backendErr == nil,
+			})
+			return
+		}
+
+		c.JSON(http.StatusOK, gin.H{
+			"status":  "healthy",
+			"redis":   true,
+			"backend": true,
+		})
+	})
+
 	// start server
 	router.Run()
 }
