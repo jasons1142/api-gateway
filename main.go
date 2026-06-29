@@ -28,6 +28,8 @@ func apiKeyAuth(config *Config) gin.HandlerFunc {
 		apiKey := c.GetHeader("x-api-key")
 
 		if !validKeys[apiKey] {
+			incrementUnauthorizedRequests()
+
 			c.JSON(http.StatusUnauthorized, gin.H{
 				"error": "Unauthorized: invalid or missing API key",
 			})
@@ -49,6 +51,8 @@ func redisRateLimiter(config *Config, redisClient *redis.Client) gin.HandlerFunc
 		count, err := redisClient.Incr(ctx, redisKey).Result()
 
 		if err != nil {
+			incrementRedisErrors()
+
 			fmt.Println("Redis error:", err)
 
 			c.JSON(http.StatusInternalServerError, gin.H{
@@ -63,6 +67,8 @@ func redisRateLimiter(config *Config, redisClient *redis.Client) gin.HandlerFunc
 		}
 
 		if int64(config.RateLimit) < count {
+			incrementRateLimitedRequests()
+
 			c.JSON(http.StatusTooManyRequests, gin.H{
 				"error": "Too many requests",
 			})
@@ -77,12 +83,18 @@ func redisRateLimiter(config *Config, redisClient *redis.Client) gin.HandlerFunc
 // logging requests made
 func requestLogger() gin.HandlerFunc {
 	return func(c *gin.Context) {
+		incrementTotalRequests()
+
 		start := time.Now()
 
 		c.Next()
+		status := c.Writer.Status()
+
+		if status >= 200 && status < 300 {
+			incrementSuccessfulRequests()
+		}
 
 		latency := time.Since(start)
-		status := c.Writer.Status()
 		apiKey := c.GetHeader("x-api-key")
 		method := c.Request.Method
 		path := c.Request.URL.Path
@@ -121,6 +133,16 @@ func main() {
 	// if we get ping request and key is valid run function c
 	router.GET("/users", requestLogger(), apiKeyAuth(config), redisRateLimiter(config, redisClient), func(c *gin.Context) {
 		proxy.ServeHTTP(c.Writer, c.Request)
+	})
+
+	router.GET("/metrics", func(c *gin.Context) {
+		c.JSON(http.StatusOK, gin.H{
+			"totalRequests":        metrics.TotalRequests,
+			"successfulRequests":   metrics.SuccessfulRequests,
+			"unauthorizedRequests": metrics.UnauthorizedRequests,
+			"rateLimitedRequests":  metrics.RateLimitedRequests,
+			"redisErrors":          metrics.RedisErrors,
+		})
 	})
 
 	// start server
