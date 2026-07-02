@@ -14,6 +14,9 @@ type Config struct {
 	RateLimit       int
 	RateLimitWindow time.Duration
 	APIKeys         map[string]bool
+
+	JWTSecret            string
+	JWTExpirationMinutes int
 }
 
 func LoadConfig() (*Config, error) {
@@ -58,11 +61,28 @@ func LoadConfig() (*Config, error) {
 		apiKeyMap[strings.TrimSpace(key)] = true
 	}
 
+	jwtSecret := os.Getenv("JWT_SECRET")
+	if jwtSecret == "" {
+		return nil, errors.New("JWT_SECRET is required")
+	}
+
+	jwtExpirationMinutes := os.Getenv("JWT_EXPIRATION_MINUTES")
+	if jwtExpirationMinutes == "" {
+		return nil, errors.New("JWT_EXPIRATION_MINUTES is required")
+	}
+
+	jwtExpirationMinuteInt, err := strconv.Atoi(jwtExpirationMinutes)
+	if err != nil {
+		return nil, errors.New("JWT_EXPIRATION_MINUTES must be a number")
+	}
+
 	return &Config{
-		BackendURL:      backendURL,
-		RedisAddr:       redisAddr,
-		RateLimit:       rateLimitInt,
-		APIKeys:         apiKeyMap,
-		RateLimitWindow: time.Duration(rateLimitWindowInt) * time.Second,
+		BackendURL:           backendURL,
+		RedisAddr:            redisAddr,
+		RateLimit:            rateLimitInt,
+		APIKeys:              apiKeyMap,
+		RateLimitWindow:      time.Duration(rateLimitWindowInt) * time.Second,
+		JWTSecret:            jwtSecret,
+		JWTExpirationMinutes: jwtExpirationMinuteInt,
 	}, nil
 }

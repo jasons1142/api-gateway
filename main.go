@@ -6,11 +6,13 @@ import (
 	"net/http"
 	"net/http/httputil"
 	"net/url"
+	"strings"
 	"time"
 
 	"context"
 
 	"github.com/gin-gonic/gin"
+	"github.com/golang-jwt/jwt/v5"
 	"github.com/joho/godotenv"
 	"github.com/redis/go-redis/v9"
 )
@@ -19,7 +21,7 @@ import (
 var ctx = context.Background()
 
 // authenticating api key
-func apiKeyAuth(config *Config) gin.HandlerFunc {
+/*func apiKeyAuth(config *Config) gin.HandlerFunc {
 	// valid keys
 	validKeys := config.APIKeys
 
@@ -32,6 +34,46 @@ func apiKeyAuth(config *Config) gin.HandlerFunc {
 
 			c.JSON(http.StatusUnauthorized, gin.H{
 				"error": "Unauthorized: invalid or missing API key",
+			})
+			c.Abort()
+			return
+		}
+
+		c.Next()
+	}
+} */
+
+// authenticating tokens
+func jwtAuthMiddleware(config *Config) gin.HandlerFunc {
+
+	return func(c *gin.Context) {
+		authHeader := c.GetHeader("Authorization")
+
+		if authHeader == "" {
+			c.JSON(http.StatusUnauthorized, gin.H{
+				"error": "missing authorization header",
+			})
+			c.Abort()
+			return
+		}
+
+		scheme, jwtToken, found := strings.Cut(authHeader, " ")
+
+		if !found || scheme != "Bearer" || jwtToken == "" {
+			c.JSON(http.StatusUnauthorized, gin.H{
+				"error": "Invalid token",
+			})
+			c.Abort()
+			return
+		}
+
+		token, err := jwt.Parse(jwtToken, func(token *jwt.Token) (interface{}, error) {
+			return []byte(config.JWTSecret), nil
+		})
+
+		if err != nil || !token.Valid || token == nil {
+			c.JSON(http.StatusUnauthorized, gin.H{
+				"error": "Unauthorized",
 			})
 			c.Abort()
 			return
@@ -131,7 +173,7 @@ func main() {
 	router := gin.Default()
 
 	// if we get ping request and key is valid run function c
-	router.GET("/users", requestLogger(), apiKeyAuth(config), redisRateLimiter(config, redisClient), func(c *gin.Context) {
+	router.GET("/users", requestLogger(), jwtAuthMiddleware(config), redisRateLimiter(config, redisClient), func(c *gin.Context) {
 		proxy.ServeHTTP(c.Writer, c.Request)
 	})
 
@@ -169,6 +211,38 @@ func main() {
 			"redis":   true,
 			"backend": true,
 		})
+	})
+
+	type Login struct {
+		Username string `json:"username" binding:"required"`
+		Password string `json:"password" binding:"required,min=8"`
+	}
+
+	router.POST("/login", func(c *gin.Context) {
+		var login Login
+
+		validUsername := "jason"
+		validPassword := "password123"
+
+		if err := c.ShouldBindJSON(&login); err != nil { // 2. Pass the pointer to it
+			c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+			return
+		}
+
+		if login.Username == validUsername && login.Password == validPassword {
+			token, tokenErr := generateJWT(config, login.Username)
+			if tokenErr == nil {
+				c.JSON(http.StatusOK, gin.H{
+					"token": token,
+				})
+				return
+			}
+		}
+
+		c.JSON(http.StatusUnauthorized, gin.H{
+			"error": "invalid username or password",
+		})
+
 	})
 
 	// start server
