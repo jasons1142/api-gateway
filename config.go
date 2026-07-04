@@ -9,7 +9,7 @@ import (
 )
 
 type Config struct {
-	BackendURL      string
+	BackendURLs     []string
 	RedisAddr       string
 	RateLimit       int
 	RateLimitWindow time.Duration
@@ -20,10 +20,12 @@ type Config struct {
 }
 
 func LoadConfig() (*Config, error) {
-	backendURL := os.Getenv("BACKEND_URL")
-	if backendURL == "" {
-		return nil, errors.New("BACKEND_URL is required")
+	backendURLs := os.Getenv("BACKEND_URLS")
+	if len(backendURLs) == 0 {
+		return nil, errors.New("BACKEND_URLs are required")
 	}
+
+	backendURLList := strings.Split(backendURLs, ",")
 
 	redisAddr := os.Getenv("REDIS_ADDR")
 	if redisAddr == "" {
@@ -77,7 +79,7 @@ func LoadConfig() (*Config, error) {
 	}
 
 	return &Config{
-		BackendURL:           backendURL,
+		BackendURLs:          backendURLList,
 		RedisAddr:            redisAddr,
 		RateLimit:            rateLimitInt,
 		APIKeys:              apiKeyMap,

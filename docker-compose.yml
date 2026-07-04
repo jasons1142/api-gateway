@@ -8,16 +8,27 @@ services:
       - .env
     depends_on:
       - redis
-      - backend-service
+      - backend-service-1
+      - backend-service-2
   redis:
     image: redis:latest
     container_name: api-gateway-redis
     ports:
       - "6379:6379"
   
-  backend-service:
+  backend-service-1:
     build: ./backend-service
-    container_name: backend-service
+    container_name: backend-service-1
+    environment:
+      - SERVICE_NAME=backend-service-1
     ports:
       - "8081:8081"
+  
+  backend-service-2:
+    build: ./backend-service
+    container_name: backend-service-2
+    environment:
+      - SERVICE_NAME=backend-service-2
+    ports:
+      - "8082:8081"
   

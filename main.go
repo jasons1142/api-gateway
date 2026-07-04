@@ -163,17 +163,29 @@ func main() {
 		Addr: config.RedisAddr,
 	})
 
-	// target backend service
-	backendURL, _ := url.Parse(config.BackendURL)
+	backendTargets := []*url.URL{}
 
-	// reverse proxy
-	proxy := httputil.NewSingleHostReverseProxy(backendURL)
+	for _, value := range config.BackendURLs {
+		parsedURL, err := url.Parse(value)
+		if err != nil {
+			log.Fatal(err)
+		}
+
+		backendTargets = append(backendTargets, parsedURL)
+	}
+
+	loadBalancer := &LoadBalancer{
+		backends: backendTargets,
+		Current:  0,
+	}
 
 	// create web server
 	router := gin.Default()
 
 	// if we get ping request and key is valid run function c
 	router.GET("/users", requestLogger(), jwtAuthMiddleware(config), redisRateLimiter(config, redisClient), func(c *gin.Context) {
+		target := loadBalancer.NextBackend()
+		proxy := httputil.NewSingleHostReverseProxy(target)
 		proxy.ServeHTTP(c.Writer, c.Request)
 	})
 
@@ -192,7 +204,7 @@ func main() {
 		_, redisErr := redisClient.Ping(ctx).Result()
 
 		// check backend
-		resp, backendErr := http.Get(config.BackendURL + "/users")
+		resp, backendErr := http.Get(config.BackendURLs[0] + "/users")
 		if resp != nil {
 			defer resp.Body.Close()
 		}
