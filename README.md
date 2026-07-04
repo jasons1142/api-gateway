@@ -24,6 +24,23 @@ A containerized API Gateway built in Go that handles authentication, rate limiti
 - JWT
 
 ## Architecture
+                   Client
+                      │
+                      ▼
+               API Gateway
+                      │
+     ┌────────┬─────────────┬─────────┐
+     ▼        ▼             ▼         ▼
+ JWT Auth  Rate Limit   Logging   Metrics
+                │
+                ▼
+             Redis
+                │
+                ▼
+       Round Robin Load Balancer
+           │                │
+           ▼                ▼
+     Backend 1         Backend 2
 ## Getting Started
 ## Environment Variables
 ## API Endpoints
