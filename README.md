@@ -43,6 +43,9 @@ A containerized API Gateway built in Go that handles authentication, rate limiti
              ▼                ▼
        Backend 1         Backend 2
 ## Getting Started
+   ### Prerequisites
+    - Docker Desktop
+    - Git
 ## Environment Variables
 ## API Endpoints
 ## Example Requests
