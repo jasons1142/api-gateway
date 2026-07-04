@@ -53,7 +53,7 @@ A containerized API Gateway built in Go that handles authentication, rate limiti
   ### Build and Start
     - docker compose up --build
   
-## Environment Variables
+  ### Environment Variables
     BACKEND_URLS=http://backend-service-1:8081,http://backend-service-2:8081
     
     REDIS_ADDR=redis:6379
