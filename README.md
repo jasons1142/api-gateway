@@ -25,7 +25,7 @@ A containerized API Gateway built in Go that handles authentication, rate limiti
 
 ## Architecture
 
-                    Client
+                     Client
                         │
                         ▼
                  API Gateway
