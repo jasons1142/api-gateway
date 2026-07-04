@@ -24,7 +24,8 @@ A containerized API Gateway built in Go that handles authentication, rate limiti
 - JWT
 
 ## Architecture
-                   Client
+
+                  Client
                       │
                       ▼
                API Gateway
