@@ -163,7 +163,7 @@ func main() {
 		Addr: config.RedisAddr,
 	})
 
-	backendTargets := []*url.URL{}
+	backendTargets := []*Backend{}
 
 	for _, value := range config.BackendURLs {
 		parsedURL, err := url.Parse(value)
@@ -171,7 +171,11 @@ func main() {
 			log.Fatal(err)
 		}
 
-		backendTargets = append(backendTargets, parsedURL)
+		backendTargets = append(backendTargets, &Backend{
+			URL:          parsedURL,
+			FailureCount: 0,
+			State:        CircuitClosed,
+		})
 	}
 
 	loadBalancer := &LoadBalancer{
@@ -184,8 +188,42 @@ func main() {
 
 	// if we get ping request and key is valid run function c
 	router.GET("/users", requestLogger(), jwtAuthMiddleware(config), redisRateLimiter(config, redisClient), func(c *gin.Context) {
-		target := loadBalancer.NextBackend()
-		proxy := httputil.NewSingleHostReverseProxy(target)
+		backend := loadBalancer.NextBackend(30 * time.Second)
+
+		if backend == nil {
+			c.JSON(http.StatusServiceUnavailable, gin.H{
+				"error": "no backends available",
+			})
+			backend.RecordFailure(3)
+			return
+		}
+		backend.RecordSuccess()
+		proxy := httputil.NewSingleHostReverseProxy(backend.URL)
+
+		proxy.ErrorHandler = func(
+			w http.ResponseWriter,
+			r *http.Request,
+			err error,
+		) {
+			backend.RecordFailure(3)
+
+			http.Error(
+				w,
+				"backend service unavailable",
+				http.StatusBadGateway,
+			)
+		}
+
+		proxy.ModifyResponse = func(resp *http.Response) error {
+			if resp.StatusCode >= http.StatusInternalServerError {
+				backend.RecordFailure(3)
+			} else {
+				backend.RecordSuccess()
+			}
+
+			return nil
+		}
+
 		proxy.ServeHTTP(c.Writer, c.Request)
 	})
 
@@ -202,18 +240,26 @@ func main() {
 	router.GET("/health", func(c *gin.Context) {
 		// check Redis
 		_, redisErr := redisClient.Ping(ctx).Result()
+		redisHealthy := redisErr == nil
 
-		// check backend
-		resp, backendErr := http.Get(config.BackendURLs[0] + "/users")
-		if resp != nil {
-			defer resp.Body.Close()
+		backendHealthy := false
+
+		healthClient := &http.Client{
+			Timeout: 2 * time.Second,
 		}
 
-		if redisErr != nil || backendErr != nil {
+		// check backend
+		resp, backendErr := healthClient.Get(config.BackendURLs[0] + "/users")
+		if resp != nil {
+			defer resp.Body.Close()
+			backendHealthy = resp.StatusCode >= 200 && resp.StatusCode < 300
+		}
+
+		if !redisHealthy || backendErr != nil || !backendHealthy {
 			c.JSON(http.StatusServiceUnavailable, gin.H{
 				"status":  "unhealthy",
-				"redis":   redisErr == nil,
-				"backend": backendErr == nil,
+				"redis":   redisHealthy,
+				"backend": backendHealthy,
 			})
 			return
 		}
